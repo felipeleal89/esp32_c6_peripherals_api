@@ -364,7 +364,15 @@ void display_fill_color(uint16_t rgb565)
 
 void display_draw_text_minimal(int x, int y, const char *s, uint16_t rgb565)
 {
+    display_draw_text_minimal_scaled(x, y, s, rgb565, 1U);
+}
+
+void display_draw_text_minimal_scaled(int x, int y, const char *s, uint16_t rgb565, uint8_t scale)
+{
     if (!g_disp.initialized || s == NULL) {
+        return;
+    }
+    if (scale == 0U) {
         return;
     }
 
@@ -377,12 +385,14 @@ void display_draw_text_minimal(int x, int y, const char *s, uint16_t rgb565)
             uint8_t col_bits = glyph[col];
             for (int row = 0; row < 7; row++) {
                 if (col_bits & (1U << row)) {
-                    display_draw_rect(cursor_x + col, cursor_y + row, 1, 1, rgb565);
+                    const int px = cursor_x + (col * (int)scale);
+                    const int py = cursor_y + (row * (int)scale);
+                    display_draw_rect(px, py, (int)scale, (int)scale, rgb565);
                 }
             }
         }
 
-        cursor_x += 6;
+        cursor_x += 6 * (int)scale;
         s++;
     }
 }

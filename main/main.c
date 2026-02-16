@@ -3,7 +3,9 @@
  */
 
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "dht20_api.h"
 #include "display_api.h"
@@ -19,8 +21,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define APP_ENABLE_DHT20 0
-#define APP_ENABLE_DISPLAY 0
+#define APP_ENABLE_DHT20 1
+#define APP_ENABLE_DISPLAY 1
 #define APP_ENABLE_KNOB 1
 #define APP_ENABLE_RGB_LED 1
 
@@ -59,6 +61,14 @@
 #define DISPLAY_Y_OFFSET 0
 #define DISPLAY_SPI_CLOCK_HZ (26 * 1000 * 1000)
 #define DISPLAY_ROTATION DISPLAY_ROTATION_90
+#define DISPLAY_TEXT_SCALE 3
+/*
+ * Board/panel-specific color mapping:
+ * on this hardware, RGB565 0xF81F is rendered as cyan on screen.
+ * If your panel uses a different channel order, tune this constant.
+ */
+#define DISPLAY_TEXT_COLOR 0xF81F
+#define DISPLAY_TEXT_LINE_GAP (8 * DISPLAY_TEXT_SCALE)
 
 /* Safe defaults for ESP32-C6: avoid GPIO6/GPIO7 (reserved here for DHT20). */
 #define TFT_PIN_SCK GPIO_NUM_2
@@ -162,18 +172,53 @@ static void knob_process(knob_t *knob, rgb_ctrl_t *rgb_ctrl)
 #endif
 
 #if APP_ENABLE_DISPLAY
+static int display_text_width_px(const char *s)
+{
+    if (s == NULL) {
+        return 0;
+    }
+    return (int)strlen(s) * 6 * DISPLAY_TEXT_SCALE;
+}
+
+static void display_draw_two_lines_centered(const char *line1, const char *line2)
+{
+    /* 5x7 font, scaled by DISPLAY_TEXT_SCALE, centered as a two-line block. */
+    const int display_w = display_get_width();
+    const int display_h = display_get_height();
+    const int line_h = 7 * DISPLAY_TEXT_SCALE;
+    const int block_h = (2 * line_h) + DISPLAY_TEXT_LINE_GAP;
+    const int line1_y = (display_h - block_h) / 2;
+    const int line2_y = line1_y + line_h + DISPLAY_TEXT_LINE_GAP;
+    const int x1 = (display_w - display_text_width_px(line1)) / 2;
+    const int x2 = (display_w - display_text_width_px(line2)) / 2;
+
+    display_draw_rect(0, line1_y - DISPLAY_TEXT_SCALE, display_w, block_h + (2 * DISPLAY_TEXT_SCALE), 0x0000);
+    display_draw_text_minimal_scaled(x1 > 0 ? x1 : 0, line1_y, line1, DISPLAY_TEXT_COLOR, DISPLAY_TEXT_SCALE);
+    display_draw_text_minimal_scaled(x2 > 0 ? x2 : 0, line2_y, line2, DISPLAY_TEXT_COLOR, DISPLAY_TEXT_SCALE);
+}
+
 static void display_show_avg(float temp_c, float rh)
 {
+    static bool has_last = false;
+    static char last_line1[32];
+    static char last_line2[32];
     char line1[32];
     char line2[32];
-    const int display_w = display_get_width();
 
     snprintf(line1, sizeof(line1), "TEMP: %.1f C", temp_c);
     snprintf(line2, sizeof(line2), "RH: %.1f %%", rh);
 
-    display_draw_rect(0, 0, display_w, 42, 0x0000);
-    display_draw_text_minimal(8, 8, line1, 0xFFFF);
-    display_draw_text_minimal(8, 22, line2, 0xFFFF);
+    if (has_last && strcmp(line1, last_line1) == 0 && strcmp(line2, last_line2) == 0) {
+        return;
+    }
+
+    strncpy(last_line1, line1, sizeof(last_line1));
+    last_line1[sizeof(last_line1) - 1] = '\0';
+    strncpy(last_line2, line2, sizeof(last_line2));
+    last_line2[sizeof(last_line2) - 1] = '\0';
+    has_last = true;
+
+    display_draw_two_lines_centered(line1, line2);
 }
 #endif
 
@@ -295,8 +340,7 @@ void app_main(void)
     if (APP_ENABLE_DHT20) {
         display_show_avg(0.0f, 0.0f);
     } else {
-        display_draw_text_minimal(8, 8, "TEMP: --.- C", 0xFFFF);
-        display_draw_text_minimal(8, 22, "RH: --.- %", 0xFFFF);
+        display_draw_two_lines_centered("TEMP: --.- C", "RH: --.- %");
     }
 #else
     UART_PRINT_WARN("Display disabled by APP_ENABLE_DISPLAY=0");

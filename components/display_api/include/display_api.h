@@ -64,6 +64,11 @@ void display_fill_color(uint16_t rgb565);
 void display_draw_rect(int x, int y, int w, int h, uint16_t rgb565);
 /** @brief Draw minimal built-in monochrome text. */
 void display_draw_text_minimal(int x, int y, const char *s, uint16_t rgb565);
+/**
+ * @brief Draw minimal built-in monochrome text with integer scale factor.
+ * @param scale Pixel scale for each glyph dot (1 = original 5x7 font).
+ */
+void display_draw_text_minimal_scaled(int x, int y, const char *s, uint16_t rgb565, uint8_t scale);
 /** @brief Run basic panel self-test visuals. */
 void display_self_test(void);
 

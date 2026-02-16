@@ -11,7 +11,11 @@
 
 - Public API in `components/dht20_api/include/dht20_api.h`.
 - Implementation in `components/dht20_api/src/dht20_api.c`.
-- Usage example in `main/main.c`.
+- Public API in `components/display_api/include/display_api.h`.
+- Implementation in `components/display_api/src/display_api.c`.
+- Public API in `components/knob_api/include/knob_api.h`.
+- Implementation in `components/knob_api/src/knob_api.c`.
+- Usage/integration example in `main/main.c`.
 
 ## Headers
 

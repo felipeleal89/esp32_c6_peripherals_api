@@ -39,6 +39,17 @@ Main feature toggles are in `main/main.c`:
 - `APP_ENABLE_KNOB`
 - `APP_ENABLE_RGB_LED`
 
+Display text presentation is also configured in `main/main.c`:
+
+- `DISPLAY_TEXT_SCALE`: text scale factor (base font is 5x7)
+- `DISPLAY_TEXT_LINE_GAP`: vertical spacing between lines
+- `DISPLAY_TEXT_COLOR`: RGB565 value used for text
+
+Notes:
+
+- The app centers temperature/humidity text on screen.
+- Some ST7789 panels use different channel order. If the on-screen color is not the expected cyan, tune `DISPLAY_TEXT_COLOR`.
+
 ## Engineering Principles
 
 - Keep behavior stable and predictable
