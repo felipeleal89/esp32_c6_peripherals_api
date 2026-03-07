@@ -1,19 +1,23 @@
 # esp32_c6_peripherals_api
 
-Reusable ESP-IDF firmware APIs for ESP32-C6 peripherals, plus a small example app in `main/`.
+Reusable ESP-IDF firmware APIs for ESP32-C6 peripherals, with an integration app in `main/`.
 
-## What Is Included
+## Included Components
 
-- `dht20_api`: DHT20 temperature/humidity sensor over I2C
-- `display_api`: ST7789 display over SPI
-- `display_image`: RGB565 image drawing utilities on top of `display_api`
-- `knob_api`: rotary encoder API (CLK/DT/SW)
+- `dht20_api`: DHT20 temperature/humidity over I2C
+- `display_api`: ST7789 display over SPI (with minimal text renderer)
+- `display_image`: RGB565 image helpers built on `display_api`
+- `knob_api`: rotary encoder (CLK/DT/SW)
+- `sntp_api`: SNTP sync + 2-line top status bar renderer
+- `wifi_http_api`: HTTP server for Wi-Fi AP/STA configuration
 
 ## Repository Layout
 
 - `components/dht20_api/`
 - `components/display_api/`
 - `components/knob_api/`
+- `components/sntp_api/`
+- `components/wifi_http_api/`
 - `main/`
 - `docs/`
 
@@ -30,32 +34,72 @@ idf.py build
 idf.py flash monitor
 ```
 
-## Configuration
+## Main App Configuration
 
-Main feature toggles are in `main/main.c`:
+All runtime toggles and board mapping are in `main/main.c`.
+
+### Feature Toggles
 
 - `APP_ENABLE_DHT20`
 - `APP_ENABLE_DISPLAY`
 - `APP_ENABLE_KNOB`
 - `APP_ENABLE_RGB_LED`
+- `APP_ENABLE_SNTP`
+- `APP_ENABLE_WIFI_HTTP`
+- `APP_RUN_DISPLAY_BENCHMARK`
 
-Display text presentation is also configured in `main/main.c`:
+### Default Pin Mapping (GPIO numbers)
 
-- `DISPLAY_TEXT_SCALE`: text scale factor (base font is 5x7)
-- `DISPLAY_TEXT_LINE_GAP`: vertical spacing between lines
-- `DISPLAY_TEXT_COLOR`: RGB565 value used for text
+- DHT20: `SDA=6`, `SCL=7`
+- TFT ST7789: `SCK=2`, `MOSI=3`, `CS=10`, `DC=11`, `RST=4`, `BLK=5`
+- Encoder: `CLK=21`, `DT=9`, `SW=20`
+- RGB LED data: `GPIO8`
 
-Notes:
+### Display Orientation and Geometry
 
-- The app centers temperature/humidity text on screen.
-- Some ST7789 panels use different channel order. If the on-screen color is not the expected cyan, tune `DISPLAY_TEXT_COLOR`.
+- `TFT_WIDTH=170`
+- `TFT_HEIGHT=320`
+- `DISPLAY_ROTATION=DISPLAY_ROTATION_0` (portrait)
+- `DISPLAY_X_OFFSET`, `DISPLAY_Y_OFFSET` for panel alignment
 
-## Engineering Principles
+### SNTP Status Bar Tuning Macros
 
-- Keep behavior stable and predictable
-- Keep modules isolated and reusable
-- Avoid unnecessary runtime allocation
-- Use explicit error handling (`esp_err_t`)
+`main/main.c` exposes layout and style controls:
+
+- `SNTP_BAR_BG_COLOR`, `SNTP_BAR_FG_COLOR`
+- `SNTP_BASE_TEXT_SCALE`
+- `SNTP_DATE_TEXT_SCALE`
+- `SNTP_TIME_TEXT_SCALE`
+- `SNTP_LINE_GAP_PX`
+- `SNTP_DATE_CHAR_SPACING_PX`
+- `SNTP_TIME_CHAR_SPACING_PX`
+
+Status text format:
+
+- Line 1: `GMTxx DD.MM.YYYY`
+- Line 2: centered `HH:MM`
+
+## Wi-Fi HTTP Config UI
+
+When `APP_ENABLE_WIFI_HTTP=1`, the device starts an AP and config page.
+
+- Default AP SSID: `ESP32C6-Setup`
+- Default AP password: `12345678`
+- UI URL: `http://192.168.4.1/`
+
+Key API routes:
+
+- `GET /api/status`
+- `GET /api/scan`
+- `POST /api/mode`
+- `POST /api/ap`
+- `POST /api/sta`
+- `POST /api/sta/disconnect`
+
+More details:
+
+- `components/wifi_http_api/README.md`
+- `components/sntp_api/README.md`
 
 ## License
 

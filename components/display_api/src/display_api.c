@@ -137,6 +137,7 @@ static const uint8_t *glyph_for_char(char c)
     static const uint8_t dot[5] = {0x00, 0x60, 0x60, 0x00, 0x00};
     static const uint8_t pct[5] = {0x62, 0x64, 0x08, 0x13, 0x23};
     static const uint8_t dash[5] = {0x08, 0x08, 0x08, 0x08, 0x08};
+    static const uint8_t plus[5] = {0x08, 0x08, 0x3E, 0x08, 0x08};
 
     static const uint8_t n0[5] = {0x3E, 0x51, 0x49, 0x45, 0x3E};
     static const uint8_t n1[5] = {0x00, 0x42, 0x7F, 0x40, 0x00};
@@ -149,13 +150,32 @@ static const uint8_t *glyph_for_char(char c)
     static const uint8_t n8[5] = {0x36, 0x49, 0x49, 0x49, 0x36};
     static const uint8_t n9[5] = {0x26, 0x49, 0x49, 0x49, 0x3E};
 
+    static const uint8_t A_[5] = {0x7E, 0x11, 0x11, 0x11, 0x7E};
+    static const uint8_t B_[5] = {0x7F, 0x49, 0x49, 0x49, 0x36};
     static const uint8_t C_[5] = {0x3E, 0x41, 0x41, 0x41, 0x22};
-    static const uint8_t H_[5] = {0x7F, 0x08, 0x08, 0x08, 0x7F};
-    static const uint8_t M_[5] = {0x7F, 0x02, 0x0C, 0x02, 0x7F};
-    static const uint8_t P_[5] = {0x7F, 0x09, 0x09, 0x09, 0x06};
-    static const uint8_t R_[5] = {0x7F, 0x09, 0x19, 0x29, 0x46};
-    static const uint8_t T_[5] = {0x01, 0x01, 0x7F, 0x01, 0x01};
+    static const uint8_t D_[5] = {0x7F, 0x41, 0x41, 0x22, 0x1C};
     static const uint8_t E_[5] = {0x7F, 0x49, 0x49, 0x49, 0x41};
+    static const uint8_t F_[5] = {0x7F, 0x09, 0x09, 0x09, 0x01};
+    static const uint8_t G_[5] = {0x3E, 0x41, 0x49, 0x49, 0x3A};
+    static const uint8_t H_[5] = {0x7F, 0x08, 0x08, 0x08, 0x7F};
+    static const uint8_t I_[5] = {0x00, 0x41, 0x7F, 0x41, 0x00};
+    static const uint8_t J_[5] = {0x20, 0x40, 0x41, 0x3F, 0x01};
+    static const uint8_t K_[5] = {0x7F, 0x08, 0x14, 0x22, 0x41};
+    static const uint8_t L_[5] = {0x7F, 0x40, 0x40, 0x40, 0x40};
+    static const uint8_t M_[5] = {0x7F, 0x02, 0x0C, 0x02, 0x7F};
+    static const uint8_t N_[5] = {0x7F, 0x04, 0x08, 0x10, 0x7F};
+    static const uint8_t O_[5] = {0x3E, 0x41, 0x41, 0x41, 0x3E};
+    static const uint8_t P_[5] = {0x7F, 0x09, 0x09, 0x09, 0x06};
+    static const uint8_t Q_[5] = {0x3E, 0x41, 0x51, 0x21, 0x5E};
+    static const uint8_t R_[5] = {0x7F, 0x09, 0x19, 0x29, 0x46};
+    static const uint8_t S_[5] = {0x46, 0x49, 0x49, 0x49, 0x31};
+    static const uint8_t T_[5] = {0x01, 0x01, 0x7F, 0x01, 0x01};
+    static const uint8_t U_[5] = {0x3F, 0x40, 0x40, 0x40, 0x3F};
+    static const uint8_t V_[5] = {0x1F, 0x20, 0x40, 0x20, 0x1F};
+    static const uint8_t W_[5] = {0x3F, 0x40, 0x38, 0x40, 0x3F};
+    static const uint8_t X_[5] = {0x63, 0x14, 0x08, 0x14, 0x63};
+    static const uint8_t Y_[5] = {0x03, 0x04, 0x78, 0x04, 0x03};
+    static const uint8_t Z_[5] = {0x61, 0x51, 0x49, 0x45, 0x43};
 
     switch (c) {
         case ' ': return space;
@@ -163,6 +183,7 @@ static const uint8_t *glyph_for_char(char c)
         case '.': return dot;
         case '%': return pct;
         case '-': return dash;
+        case '+': return plus;
         case '0': return n0;
         case '1': return n1;
         case '2': return n2;
@@ -173,13 +194,32 @@ static const uint8_t *glyph_for_char(char c)
         case '7': return n7;
         case '8': return n8;
         case '9': return n9;
+        case 'A': return A_;
+        case 'B': return B_;
         case 'C': return C_;
-        case 'H': return H_;
-        case 'M': return M_;
-        case 'P': return P_;
-        case 'R': return R_;
-        case 'T': return T_;
+        case 'D': return D_;
         case 'E': return E_;
+        case 'F': return F_;
+        case 'G': return G_;
+        case 'H': return H_;
+        case 'I': return I_;
+        case 'J': return J_;
+        case 'K': return K_;
+        case 'L': return L_;
+        case 'M': return M_;
+        case 'N': return N_;
+        case 'O': return O_;
+        case 'P': return P_;
+        case 'Q': return Q_;
+        case 'R': return R_;
+        case 'S': return S_;
+        case 'T': return T_;
+        case 'U': return U_;
+        case 'V': return V_;
+        case 'W': return W_;
+        case 'X': return X_;
+        case 'Y': return Y_;
+        case 'Z': return Z_;
         default: return space;
     }
 }

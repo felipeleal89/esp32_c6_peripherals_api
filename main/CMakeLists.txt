@@ -2,5 +2,5 @@
 
 idf_component_register(SRCS "main.c"
     INCLUDE_DIRS "."
-    REQUIRES dht20_api display_api knob_api
+    REQUIRES dht20_api display_api knob_api sntp_api wifi_http_api
 )
