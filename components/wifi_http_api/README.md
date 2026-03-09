@@ -13,6 +13,7 @@ Wi-Fi configuration component for ESP-IDF with embedded HTTP UI and JSON API.
   - configure AP settings
   - configure/connect STA
   - disconnect STA
+  - control display brightness and SNTP bar style (color/font/spacing)
 - Persists STA credentials in NVS
 
 ## Public API
@@ -40,6 +41,9 @@ Header: `components/wifi_http_api/include/wifi_http_api.h`
 - `GET /api/status`  
   Returns mode, AP config, STA state and STA IP.
 
+- `GET /api/health`  
+  Lightweight health endpoint for probes/monitors.
+
 - `GET /api/scan`  
   Triggers a scan and returns AP list (`ssid`, `rssi`, `authmode`).
 
@@ -55,6 +59,16 @@ Header: `components/wifi_http_api/include/wifi_http_api.h`
 - `POST /api/sta/disconnect`  
   Body: `{}`
 
+- `GET /api/display`  
+  Returns display + SNTP bar UI config (`brightness`, RGB565 colors, scales, spacing).
+
+- `POST /api/display`  
+  Body fields (all optional):
+  `brightness`, `bar_bg_color`, `bar_fg_color`,
+  `text_scale`, `date_scale`, `time_scale`,
+  `line_gap_px`, `date_char_spacing_px`, `time_char_spacing_px`, `redraw`.
+  Colors accept integer (`0..65535`) or hex string (`"0xFFFF"`).
+
 ## Example
 
 ```c
@@ -68,4 +82,3 @@ const wifi_http_api_cfg_t wifi_cfg = {
 
 wifi_http_api_init(&wifi_cfg);
 ```
-

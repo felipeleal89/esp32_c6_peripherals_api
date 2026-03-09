@@ -4,24 +4,30 @@
 
 #include "wifi_http_api.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
+#include "display_api.h"
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "sntp_api.h"
 
 #define WIFI_HTTP_API_NVS_NAMESPACE "wifi_http"
 #define WIFI_HTTP_API_NVS_STA_SSID "sta_ssid"
 #define WIFI_HTTP_API_NVS_STA_PASS "sta_pass"
 #define WIFI_HTTP_API_MAX_JSON_BODY 512
+#define WIFI_HTTP_API_DEFAULT_BRIGHTNESS 90U
+#define WIFI_HTTP_API_MAX_TEXT_SCALE 16U
 
 static const char *TAG = "wifi_http_api";
 
@@ -41,6 +47,8 @@ typedef struct {
     char ap_pass[65];
     uint8_t ap_channel;
     uint8_t ap_max_connection;
+    uint8_t display_brightness_pct;
+    sntp_api_style_t sntp_style_cache;
 } wifi_http_api_ctx_t;
 
 static wifi_http_api_ctx_t g_wifi = {0};
@@ -59,16 +67,70 @@ static const char *s_web_ui_html =
     "<section><h4>STA Config</h4>SSID<br><input id='sta_ssid'><br>Password<br><input id='sta_pass' type='password'>"
     "<br><button onclick='setSta()'>Save+Connect STA</button> <button onclick='disconnectSta()'>Disconnect STA</button>"
     "<br><button onclick='scan()'>Scan APs</button><pre id='scan'></pre></section>"
+    "<section><h4>Display / SNTP Bar</h4>"
+    "Brightness (0..100)<br><input id='disp_br' value='90' type='number' min='0' max='100'>"
+    "<br>Background RGB565 (e.g. 0x0000)<br><input id='bar_bg' value='0x0000'>"
+    "<br>Foreground RGB565 (e.g. 0xFFFF)<br><input id='bar_fg' value='0xFFFF'>"
+    "<br>Base scale<br><input id='txt_scale' value='1' type='number' min='1' max='16'>"
+    "<br>Date scale (0=auto)<br><input id='date_scale' value='0' type='number' min='0' max='16'>"
+    "<br>Time scale (0=auto)<br><input id='time_scale' value='0' type='number' min='0' max='16'>"
+    "<br>Line gap px (0=auto)<br><input id='line_gap' value='0' type='number' min='0' max='120'>"
+    "<br>Date char spacing px<br><input id='date_sp' value='0' type='number' min='0' max='20'>"
+    "<br>Time char spacing px<br><input id='time_sp' value='0' type='number' min='0' max='20'>"
+    "<br><button onclick='loadDisplay()'>Load Display Config</button> <button onclick='setDisplay()'>Apply Display Config</button>"
+    "<pre id='disp'></pre></section>"
     "<script>"
-    "const j=(u,m,d)=>fetch(u,{method:m,headers:{'Content-Type':'application/json'},body:d?JSON.stringify(d):undefined}).then(r=>r.json());"
-    "function show(id,v){document.getElementById(id).textContent=JSON.stringify(v,null,2)}"
-    "async function status(){show('out',await j('/api/status','GET'));}"
+    "const el=id=>document.getElementById(id);"
+    "const show=(id,v)=>{el(id).textContent=JSON.stringify(v,null,2);};"
+    "const color565=v=>{const n=Number(v)||0;return '0x'+n.toString(16).toUpperCase().padStart(4,'0');};"
+    "const j=async(u,m,d)=>{"
+    "try{"
+    "const r=await fetch(u,{method:m,headers:{'Content-Type':'application/json'},body:d?JSON.stringify(d):undefined});"
+    "const t=await r.text();"
+    "let o;"
+    "try{o=JSON.parse(t);}catch(_){o={ok:false,error:t||r.statusText};}"
+    "if(!r.ok&&o.ok===undefined)o.ok=false;"
+    "return o;"
+    "}catch(e){return {ok:false,error:String(e)};}"
+    "};"
+    "async function status(){"
+    "const s=await j('/api/status','GET');"
+    "show('out',s);"
+    "if(s&&s.ok){"
+    "if(s.mode)el('mode').value=s.mode;"
+    "if(s.ap){el('ap_ssid').value=s.ap.ssid||'';el('ap_ch').value=s.ap.channel||1;}"
+    "if(s.sta){el('sta_ssid').value=s.sta.ssid||'';}"
+    "}"
+    "}"
     "async function scan(){show('scan',await j('/api/scan','GET'));}"
-    "async function setMode(){await j('/api/mode','POST',{mode:document.getElementById('mode').value});status();}"
-    "async function setAp(){await j('/api/ap','POST',{ssid:ap_ssid.value,password:ap_pass.value,channel:Number(ap_ch.value)});status();}"
-    "async function setSta(){await j('/api/sta','POST',{ssid:sta_ssid.value,password:sta_pass.value,connect:true});status();}"
-    "async function disconnectSta(){await j('/api/sta/disconnect','POST',{});status();}"
+    "async function setMode(){show('out',await j('/api/mode','POST',{mode:el('mode').value}));status();}"
+    "async function setAp(){show('out',await j('/api/ap','POST',{ssid:el('ap_ssid').value,password:el('ap_pass').value,channel:Number(el('ap_ch').value)}));status();}"
+    "async function setSta(){show('out',await j('/api/sta','POST',{ssid:el('sta_ssid').value,password:el('sta_pass').value,connect:true}));status();}"
+    "async function disconnectSta(){show('out',await j('/api/sta/disconnect','POST',{}));status();}"
+    "async function loadDisplay(){"
+    "const d=await j('/api/display','GET');"
+    "show('disp',d);"
+    "if(!d.ok)return;"
+    "el('disp_br').value=d.brightness;"
+    "el('bar_bg').value=color565(d.bar_bg_color);"
+    "el('bar_fg').value=color565(d.bar_fg_color);"
+    "el('txt_scale').value=d.text_scale;"
+    "el('date_scale').value=d.date_scale;"
+    "el('time_scale').value=d.time_scale;"
+    "el('line_gap').value=d.line_gap_px;"
+    "el('date_sp').value=d.date_char_spacing_px;"
+    "el('time_sp').value=d.time_char_spacing_px;"
+    "}"
+    "async function setDisplay(){"
+    "const d=await j('/api/display','POST',{"
+    "brightness:Number(el('disp_br').value),bar_bg_color:el('bar_bg').value,bar_fg_color:el('bar_fg').value,"
+    "text_scale:Number(el('txt_scale').value),date_scale:Number(el('date_scale').value),time_scale:Number(el('time_scale').value),"
+    "line_gap_px:Number(el('line_gap').value),date_char_spacing_px:Number(el('date_sp').value),time_char_spacing_px:Number(el('time_sp').value),"
+    "redraw:true});"
+    "show('disp',d);"
+    "}"
     "status();"
+    "loadDisplay();"
     "</script></body></html>";
 
 static const char *mode_to_str(const wifi_mode_t mode)
@@ -231,6 +293,85 @@ static esp_err_t send_error_json(httpd_req_t *req, int status, const char *msg)
     return err;
 }
 
+static esp_err_t json_read_u8(cJSON *root, const char *key, uint8_t min_v, uint8_t max_v, uint8_t *out, bool *present)
+{
+    if (root == NULL || key == NULL || out == NULL || present == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    cJSON *item = cJSON_GetObjectItem(root, key);
+    if (item == NULL) {
+        *present = false;
+        return ESP_OK;
+    }
+    if (!cJSON_IsNumber(item)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const int v = item->valueint;
+    if (v < (int)min_v || v > (int)max_v) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    *out = (uint8_t)v;
+    *present = true;
+    return ESP_OK;
+}
+
+static esp_err_t json_read_u16_color(cJSON *root, const char *key, uint16_t *out, bool *present)
+{
+    if (root == NULL || key == NULL || out == NULL || present == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    cJSON *item = cJSON_GetObjectItem(root, key);
+    if (item == NULL) {
+        *present = false;
+        return ESP_OK;
+    }
+
+    uint32_t v = 0U;
+    if (cJSON_IsNumber(item)) {
+        if (item->valuedouble < 0 || item->valuedouble > 65535.0) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        v = (uint32_t)item->valueint;
+    } else if (cJSON_IsString(item) && item->valuestring != NULL) {
+        char *endptr = NULL;
+        errno = 0;
+        unsigned long parsed = strtoul(item->valuestring, &endptr, 0);
+        if (errno != 0 || endptr == item->valuestring || *endptr != '\0' || parsed > 0xFFFFUL) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        v = (uint32_t)parsed;
+    } else {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    *out = (uint16_t)v;
+    *present = true;
+    return ESP_OK;
+}
+
+static void add_display_cfg_json(cJSON *root, const sntp_api_style_t *style, uint8_t brightness, bool sntp_ready)
+{
+    if (root == NULL || style == NULL) {
+        return;
+    }
+
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddBoolToObject(root, "sntp_ready", sntp_ready);
+    cJSON_AddNumberToObject(root, "brightness", brightness);
+    cJSON_AddNumberToObject(root, "bar_bg_color", style->bar_bg_color);
+    cJSON_AddNumberToObject(root, "bar_fg_color", style->bar_fg_color);
+    cJSON_AddNumberToObject(root, "text_scale", style->text_scale);
+    cJSON_AddNumberToObject(root, "date_scale", style->date_scale);
+    cJSON_AddNumberToObject(root, "time_scale", style->time_scale);
+    cJSON_AddNumberToObject(root, "line_gap_px", style->line_gap_px);
+    cJSON_AddNumberToObject(root, "date_char_spacing_px", style->date_char_spacing_px);
+    cJSON_AddNumberToObject(root, "time_char_spacing_px", style->time_char_spacing_px);
+}
+
 static esp_err_t apply_ap_config(void)
 {
     wifi_config_t ap_cfg = {0};
@@ -335,6 +476,26 @@ static esp_err_t uri_status_get_handler(httpd_req_t *req)
 
     cJSON_AddItemToObject(root, "ap", ap);
     cJSON_AddItemToObject(root, "sta", sta);
+
+    esp_err_t err = send_json_response(req, 200, root);
+    cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t uri_health_get_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        return send_error_json(req, 500, "no memory");
+    }
+
+    sta_ip_to_string();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddStringToObject(root, "service", "wifi_http_api");
+    cJSON_AddNumberToObject(root, "uptime_ms", (double)(esp_timer_get_time() / 1000LL));
+    cJSON_AddBoolToObject(root, "sta_connected", g_wifi.sta_connected);
+    cJSON_AddStringToObject(root, "sta_ip", g_wifi.sta_ip);
+    cJSON_AddBoolToObject(root, "time_valid", sntp_api_is_time_valid());
 
     esp_err_t err = send_json_response(req, 200, root);
     cJSON_Delete(root);
@@ -548,6 +709,8 @@ static esp_err_t uri_sta_post_handler(httpd_req_t *req)
     err = nvs_save_sta_credentials(g_wifi.sta_ssid, g_wifi.sta_pass);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "failed to persist STA credentials: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "STA credentials saved for SSID=%s", g_wifi.sta_ssid);
     }
 
     wifi_mode_t mode = WIFI_MODE_NULL;
@@ -589,10 +752,165 @@ static esp_err_t uri_sta_disconnect_post_handler(httpd_req_t *req)
     return err;
 }
 
+static esp_err_t uri_display_get_handler(httpd_req_t *req)
+{
+    sntp_api_style_t style = g_wifi.sntp_style_cache;
+    const bool sntp_ready = (sntp_api_get_style(&style) == ESP_OK);
+    if (sntp_ready) {
+        g_wifi.sntp_style_cache = style;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        return send_error_json(req, 500, "no memory");
+    }
+
+    add_display_cfg_json(root, &style, g_wifi.display_brightness_pct, sntp_ready);
+    esp_err_t err = send_json_response(req, 200, root);
+    cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t uri_display_post_handler(httpd_req_t *req)
+{
+    char body[WIFI_HTTP_API_MAX_JSON_BODY + 1] = {0};
+    cJSON *root = NULL;
+    esp_err_t err = read_json_body(req, body, sizeof(body), &root);
+    if (err != ESP_OK) {
+        return send_error_json(req, 400, "invalid JSON body");
+    }
+
+    sntp_api_style_t style = g_wifi.sntp_style_cache;
+    bool sntp_ready = (sntp_api_get_style(&style) == ESP_OK);
+
+    bool has_brightness = false;
+    uint8_t brightness = g_wifi.display_brightness_pct;
+    err = json_read_u8(root, "brightness", 0U, 100U, &brightness, &has_brightness);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "brightness must be 0..100");
+    }
+
+    bool has_bg = false;
+    uint16_t bg = style.bar_bg_color;
+    err = json_read_u16_color(root, "bar_bg_color", &bg, &has_bg);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "bar_bg_color must be RGB565 (0..65535 or 0xNNNN)");
+    }
+
+    bool has_fg = false;
+    uint16_t fg = style.bar_fg_color;
+    err = json_read_u16_color(root, "bar_fg_color", &fg, &has_fg);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "bar_fg_color must be RGB565 (0..65535 or 0xNNNN)");
+    }
+
+    bool has_text_scale = false;
+    uint8_t text_scale = style.text_scale;
+    err = json_read_u8(root, "text_scale", 1U, WIFI_HTTP_API_MAX_TEXT_SCALE, &text_scale, &has_text_scale);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "text_scale must be 1..16");
+    }
+
+    bool has_date_scale = false;
+    uint8_t date_scale = style.date_scale;
+    err = json_read_u8(root, "date_scale", 0U, WIFI_HTTP_API_MAX_TEXT_SCALE, &date_scale, &has_date_scale);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "date_scale must be 0..16");
+    }
+
+    bool has_time_scale = false;
+    uint8_t time_scale = style.time_scale;
+    err = json_read_u8(root, "time_scale", 0U, WIFI_HTTP_API_MAX_TEXT_SCALE, &time_scale, &has_time_scale);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "time_scale must be 0..16");
+    }
+
+    bool has_gap = false;
+    uint8_t line_gap = style.line_gap_px;
+    err = json_read_u8(root, "line_gap_px", 0U, 120U, &line_gap, &has_gap);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "line_gap_px must be 0..120");
+    }
+
+    bool has_date_sp = false;
+    uint8_t date_spacing = style.date_char_spacing_px;
+    err = json_read_u8(root, "date_char_spacing_px", 0U, 20U, &date_spacing, &has_date_sp);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "date_char_spacing_px must be 0..20");
+    }
+
+    bool has_time_sp = false;
+    uint8_t time_spacing = style.time_char_spacing_px;
+    err = json_read_u8(root, "time_char_spacing_px", 0U, 20U, &time_spacing, &has_time_sp);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(req, 400, "time_char_spacing_px must be 0..20");
+    }
+
+    bool redraw = true;
+    cJSON *redraw_item = cJSON_GetObjectItem(root, "redraw");
+    if (cJSON_IsBool(redraw_item)) {
+        redraw = cJSON_IsTrue(redraw_item);
+    }
+    cJSON_Delete(root);
+
+    if (has_brightness) {
+        g_wifi.display_brightness_pct = brightness;
+        display_backlight_set(g_wifi.display_brightness_pct);
+    }
+
+    const bool has_style_change = has_bg || has_fg || has_text_scale || has_date_scale
+                                  || has_time_scale || has_gap || has_date_sp || has_time_sp;
+    if (has_style_change) {
+        style.bar_bg_color = bg;
+        style.bar_fg_color = fg;
+        style.text_scale = text_scale;
+        style.date_scale = date_scale;
+        style.time_scale = time_scale;
+        style.line_gap_px = line_gap;
+        style.date_char_spacing_px = date_spacing;
+        style.time_char_spacing_px = time_spacing;
+        g_wifi.sntp_style_cache = style;
+
+        err = sntp_api_set_style(&style);
+        if (err == ESP_OK) {
+            sntp_ready = true;
+        } else {
+            sntp_ready = false;
+            ESP_LOGW(TAG, "sntp_api_set_style failed: %s", esp_err_to_name(err));
+        }
+    }
+
+    if (redraw && sntp_ready) {
+        sntp_api_status_bar_draw();
+    }
+
+    cJSON *resp = cJSON_CreateObject();
+    if (resp == NULL) {
+        return send_error_json(req, 500, "no memory");
+    }
+
+    add_display_cfg_json(resp, &g_wifi.sntp_style_cache, g_wifi.display_brightness_pct, sntp_ready);
+    if (!sntp_ready) {
+        cJSON_AddStringToObject(resp, "warning", "SNTP style not applied yet (SNTP not initialized)");
+    }
+    err = send_json_response(req, 200, resp);
+    cJSON_Delete(resp);
+    return err;
+}
+
 static esp_err_t start_http_server(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 12;
+    cfg.max_uri_handlers = 16;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
 
     ESP_RETURN_ON_ERROR(httpd_start(&g_wifi.httpd, &cfg), TAG, "httpd_start failed");
@@ -607,6 +925,12 @@ static esp_err_t start_http_server(void)
         .uri = "/api/status",
         .method = HTTP_GET,
         .handler = uri_status_get_handler,
+        .user_ctx = NULL,
+    };
+    const httpd_uri_t health_uri = {
+        .uri = "/api/health",
+        .method = HTTP_GET,
+        .handler = uri_health_get_handler,
         .user_ctx = NULL,
     };
     const httpd_uri_t scan_uri = {
@@ -639,14 +963,29 @@ static esp_err_t start_http_server(void)
         .handler = uri_sta_disconnect_post_handler,
         .user_ctx = NULL,
     };
+    const httpd_uri_t display_get_uri = {
+        .uri = "/api/display",
+        .method = HTTP_GET,
+        .handler = uri_display_get_handler,
+        .user_ctx = NULL,
+    };
+    const httpd_uri_t display_post_uri = {
+        .uri = "/api/display",
+        .method = HTTP_POST,
+        .handler = uri_display_post_handler,
+        .user_ctx = NULL,
+    };
 
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &root_uri), TAG, "register / failed");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &status_uri), TAG, "register /api/status failed");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &health_uri), TAG, "register /api/health failed");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &scan_uri), TAG, "register /api/scan failed");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &mode_uri), TAG, "register /api/mode failed");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &ap_uri), TAG, "register /api/ap failed");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &sta_uri), TAG, "register /api/sta failed");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &sta_dis_uri), TAG, "register /api/sta/disconnect failed");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &display_get_uri), TAG, "register /api/display GET failed");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(g_wifi.httpd, &display_post_uri), TAG, "register /api/display POST failed");
 
     return ESP_OK;
 }
@@ -674,6 +1013,17 @@ esp_err_t wifi_http_api_init(const wifi_http_api_cfg_t *cfg)
     g_wifi.sta_ssid[0] = '\0';
     g_wifi.sta_pass[0] = '\0';
     strncpy(g_wifi.sta_ip, "0.0.0.0", sizeof(g_wifi.sta_ip));
+    g_wifi.display_brightness_pct = WIFI_HTTP_API_DEFAULT_BRIGHTNESS;
+    g_wifi.sntp_style_cache = (sntp_api_style_t){
+        .bar_bg_color = 0x0000,
+        .bar_fg_color = 0xFFFF,
+        .text_scale = 1U,
+        .date_scale = 0U,
+        .time_scale = 0U,
+        .line_gap_px = 0U,
+        .date_char_spacing_px = 0U,
+        .time_char_spacing_px = 0U,
+    };
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -685,6 +1035,10 @@ esp_err_t wifi_http_api_init(const wifi_http_api_cfg_t *cfg)
     err = nvs_load_sta_credentials(g_wifi.sta_ssid, sizeof(g_wifi.sta_ssid), g_wifi.sta_pass, sizeof(g_wifi.sta_pass));
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "loaded saved STA credentials for SSID=%s", g_wifi.sta_ssid);
+    } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "no saved STA credentials in NVS");
+    } else {
+        ESP_LOGW(TAG, "failed to load STA credentials from NVS: %s", esp_err_to_name(err));
     }
 
     err = esp_netif_init();

@@ -23,7 +23,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define APP_ENABLE_DHT20 0
+#define APP_ENABLE_DHT20 1
 #define APP_ENABLE_DISPLAY 1
 #define APP_ENABLE_KNOB 0
 #define APP_ENABLE_RGB_LED 0
@@ -68,6 +68,7 @@
 #define DHT20_READY_TIMEOUT_MS 120
 #define DHT20_POLL_INTERVAL_MS 2
 #define DHT20_PRINT_PERIOD_MS 2000
+#define DHT20_DISABLED_PRINT_PERIOD_MS 30000
 
 #define DHT20_TEMP_OFFSET_C 0.0f
 #define DHT20_HUM_OFFSET_RH 0.0f
@@ -674,7 +675,7 @@ void app_main(void)
         }
 #else
         const TickType_t now_tick = xTaskGetTickCount();
-        if ((now_tick - last_idle_log_tick) >= pdMS_TO_TICKS(DHT20_PRINT_PERIOD_MS)) {
+        if ((now_tick - last_idle_log_tick) >= pdMS_TO_TICKS(DHT20_DISABLED_PRINT_PERIOD_MS)) {
             UART_PRINT_INFO("DHT20 disabled; no sensor acquisition running");
             last_idle_log_tick = now_tick;
         }

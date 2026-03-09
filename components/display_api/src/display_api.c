@@ -16,6 +16,7 @@
 #include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #define DISPLAY_SPI_HOST SPI2_HOST
@@ -31,6 +32,7 @@
 #define DISPLAY_BL_LEDC_FREQ_HZ 5000
 #define DISPLAY_BL_MAX_DUTY ((1U << DISPLAY_BL_LEDC_DUTY_RES) - 1U)
 #define DISPLAY_LINE_BUF_PIXELS_MAX 320U
+#define DISPLAY_LOCK_TIMEOUT_MS 1000U
 
 #define DISPLAY_COLOR_BLACK 0x0000
 #define DISPLAY_COLOR_WHITE 0xFFFF
@@ -41,6 +43,7 @@
 
 static const char *TAG = "display_api";
 static uint16_t s_line_buf[DISPLAY_LINE_BUF_PIXELS_MAX];
+static SemaphoreHandle_t s_display_lock = NULL;
 
 #define DISPLAY_LOGI(format, ...) ESP_LOGI(TAG, format, ##__VA_ARGS__)
 #define DISPLAY_LOGW(format, ...) ESP_LOGW(TAG, format, ##__VA_ARGS__)
@@ -60,6 +63,21 @@ typedef struct {
 } display_ctx_t;
 
 static display_ctx_t g_disp = {0};
+
+static bool display_lock(void)
+{
+    if (s_display_lock == NULL) {
+        return true;
+    }
+    return xSemaphoreTakeRecursive(s_display_lock, pdMS_TO_TICKS(DISPLAY_LOCK_TIMEOUT_MS)) == pdTRUE;
+}
+
+static void display_unlock(void)
+{
+    if (s_display_lock != NULL) {
+        (void)xSemaphoreGiveRecursive(s_display_lock);
+    }
+}
 
 static int max_i32(const int a, const int b)
 {
@@ -86,6 +104,29 @@ static void fill_line_buf(uint16_t color, size_t pixels)
 {
     for (size_t i = 0; i < pixels; i++) {
         g_disp.line_buf[i] = color;
+    }
+}
+
+static void draw_rect_locked(int x, int y, int w, int h, uint16_t rgb565)
+{
+    if (!g_disp.initialized || w <= 0 || h <= 0) {
+        return;
+    }
+
+    int x0 = clampi(x, 0, g_disp.active_width);
+    int y0 = clampi(y, 0, g_disp.active_height);
+    int x1 = clampi(x + w, 0, g_disp.active_width);
+    int y1 = clampi(y + h, 0, g_disp.active_height);
+
+    if (x1 <= x0 || y1 <= y0) {
+        return;
+    }
+
+    const int draw_w = x1 - x0;
+    fill_line_buf(rgb565, (size_t)draw_w);
+
+    for (int row = y0; row < y1; row++) {
+        esp_lcd_panel_draw_bitmap(g_disp.panel, x0, row, x1, row + 1, g_disp.line_buf);
     }
 }
 
@@ -240,6 +281,11 @@ esp_err_t display_init(const display_pins_t *pins, const display_cfg_t *cfg)
         return ESP_OK;
     }
 
+    if (s_display_lock == NULL) {
+        s_display_lock = xSemaphoreCreateRecursiveMutex();
+        ESP_RETURN_ON_FALSE(s_display_lock != NULL, ESP_ERR_NO_MEM, TAG, "display lock alloc failed");
+    }
+
     g_disp.pins = *pins;
     g_disp.cfg = *cfg;
 
@@ -311,6 +357,9 @@ void display_set_rotation(uint8_t rotation)
     if (!g_disp.initialized) {
         return;
     }
+    if (!display_lock()) {
+        return;
+    }
 
     const uint8_t rot = rotation % 4U;
     g_disp.rotation = rot;
@@ -336,6 +385,7 @@ void display_set_rotation(uint8_t rotation)
     }
     calc_viewport_for_rotation(rot, &g_disp.active_width, &g_disp.active_height, &g_disp.active_x_offset, &g_disp.active_y_offset);
     esp_lcd_panel_set_gap(g_disp.panel, g_disp.active_x_offset, g_disp.active_y_offset);
+    display_unlock();
 }
 
 int display_get_width(void)
@@ -367,11 +417,15 @@ void display_backlight_set(uint8_t percent)
     if (!g_disp.initialized) {
         return;
     }
+    if (!display_lock()) {
+        return;
+    }
 
     const uint8_t p = clamp_percent(percent);
     const uint32_t duty = (DISPLAY_BL_MAX_DUTY * p) / 100U;
     ledc_set_duty(DISPLAY_BL_LEDC_MODE, DISPLAY_BL_LEDC_CHANNEL, duty);
     ledc_update_duty(DISPLAY_BL_LEDC_MODE, DISPLAY_BL_LEDC_CHANNEL);
+    display_unlock();
 }
 
 void display_draw_rect(int x, int y, int w, int h, uint16_t rgb565)
@@ -379,27 +433,23 @@ void display_draw_rect(int x, int y, int w, int h, uint16_t rgb565)
     if (!g_disp.initialized || w <= 0 || h <= 0) {
         return;
     }
-
-    int x0 = clampi(x, 0, g_disp.active_width);
-    int y0 = clampi(y, 0, g_disp.active_height);
-    int x1 = clampi(x + w, 0, g_disp.active_width);
-    int y1 = clampi(y + h, 0, g_disp.active_height);
-
-    if (x1 <= x0 || y1 <= y0) {
+    if (!display_lock()) {
         return;
     }
-
-    const int draw_w = x1 - x0;
-    fill_line_buf(rgb565, (size_t)draw_w);
-
-    for (int row = y0; row < y1; row++) {
-        esp_lcd_panel_draw_bitmap(g_disp.panel, x0, row, x1, row + 1, g_disp.line_buf);
-    }
+    draw_rect_locked(x, y, w, h, rgb565);
+    display_unlock();
 }
 
 void display_fill_color(uint16_t rgb565)
 {
-    display_draw_rect(0, 0, g_disp.active_width, g_disp.active_height, rgb565);
+    if (!g_disp.initialized) {
+        return;
+    }
+    if (!display_lock()) {
+        return;
+    }
+    draw_rect_locked(0, 0, g_disp.active_width, g_disp.active_height, rgb565);
+    display_unlock();
 }
 
 void display_draw_text_minimal(int x, int y, const char *s, uint16_t rgb565)
@@ -415,6 +465,9 @@ void display_draw_text_minimal_scaled(int x, int y, const char *s, uint16_t rgb5
     if (scale == 0U) {
         return;
     }
+    if (!display_lock()) {
+        return;
+    }
 
     int cursor_x = x;
     const int cursor_y = y;
@@ -427,7 +480,7 @@ void display_draw_text_minimal_scaled(int x, int y, const char *s, uint16_t rgb5
                 if (col_bits & (1U << row)) {
                     const int px = cursor_x + (col * (int)scale);
                     const int py = cursor_y + (row * (int)scale);
-                    display_draw_rect(px, py, (int)scale, (int)scale, rgb565);
+                    draw_rect_locked(px, py, (int)scale, (int)scale, rgb565);
                 }
             }
         }
@@ -435,6 +488,7 @@ void display_draw_text_minimal_scaled(int x, int y, const char *s, uint16_t rgb5
         cursor_x += 6 * (int)scale;
         s++;
     }
+    display_unlock();
 }
 
 void display_self_test(void)

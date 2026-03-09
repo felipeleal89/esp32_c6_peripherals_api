@@ -38,6 +38,21 @@ typedef struct {
 
 static sntp_api_ctx_t g_sntp = {0};
 
+static void style_from_ctx(sntp_api_style_t *style)
+{
+    if (style == NULL) {
+        return;
+    }
+    style->bar_bg_color = g_sntp.bar_bg_color;
+    style->bar_fg_color = g_sntp.bar_fg_color;
+    style->text_scale = g_sntp.text_scale;
+    style->date_scale = g_sntp.date_scale;
+    style->time_scale = g_sntp.time_scale;
+    style->line_gap_px = g_sntp.line_gap_px;
+    style->date_char_spacing_px = g_sntp.date_char_spacing_px;
+    style->time_char_spacing_px = g_sntp.time_char_spacing_px;
+}
+
 static int text_width_px(const char *s, const uint8_t scale, const uint8_t char_spacing_px)
 {
     if (s == NULL) {
@@ -299,4 +314,34 @@ void sntp_api_status_bar_update_if_due(uint32_t min_period_ms)
     }
 
     sntp_api_status_bar_draw();
+}
+
+esp_err_t sntp_api_get_style(sntp_api_style_t *out_style)
+{
+    ESP_RETURN_ON_FALSE(out_style != NULL, ESP_ERR_INVALID_ARG, TAG, "out_style is null");
+    ESP_RETURN_ON_FALSE(g_sntp.initialized, ESP_ERR_INVALID_STATE, TAG, "SNTP not initialized");
+
+    style_from_ctx(out_style);
+    return ESP_OK;
+}
+
+esp_err_t sntp_api_set_style(const sntp_api_style_t *style)
+{
+    ESP_RETURN_ON_FALSE(style != NULL, ESP_ERR_INVALID_ARG, TAG, "style is null");
+    ESP_RETURN_ON_FALSE(g_sntp.initialized, ESP_ERR_INVALID_STATE, TAG, "SNTP not initialized");
+    ESP_RETURN_ON_FALSE(style->text_scale > 0U, ESP_ERR_INVALID_ARG, TAG, "text_scale must be >= 1");
+
+    g_sntp.bar_bg_color = style->bar_bg_color;
+    g_sntp.bar_fg_color = style->bar_fg_color;
+    g_sntp.text_scale = style->text_scale;
+    g_sntp.date_scale = style->date_scale;
+    g_sntp.time_scale = style->time_scale;
+    g_sntp.line_gap_px = style->line_gap_px;
+    g_sntp.date_char_spacing_px = style->date_char_spacing_px;
+    g_sntp.time_char_spacing_px = style->time_char_spacing_px;
+
+    /* Force redraw even if time text did not change. */
+    g_sntp.last_line[0] = '\0';
+    g_sntp.last_draw_us = 0;
+    return ESP_OK;
 }

@@ -28,6 +28,8 @@ Header: `components/sntp_api/include/sntp_api.h`
 - `esp_err_t sntp_api_format_status(char *out, size_t out_len);`
 - `void sntp_api_status_bar_draw(void);`
 - `void sntp_api_status_bar_update_if_due(uint32_t min_period_ms);`
+- `esp_err_t sntp_api_get_style(sntp_api_style_t *out_style);`
+- `esp_err_t sntp_api_set_style(const sntp_api_style_t *style);`
 
 ## Config Struct
 

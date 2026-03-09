@@ -90,11 +90,14 @@ When `APP_ENABLE_WIFI_HTTP=1`, the device starts an AP and config page.
 Key API routes:
 
 - `GET /api/status`
+- `GET /api/health`
 - `GET /api/scan`
 - `POST /api/mode`
 - `POST /api/ap`
 - `POST /api/sta`
 - `POST /api/sta/disconnect`
+- `GET /api/display`
+- `POST /api/display` (brightness + SNTP bar color/font/spacing)
 
 More details:
 
